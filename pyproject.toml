@@ -1,0 +1,22 @@
+[project]
+name = "credit-card-optimizer"
+version = "0.1.0"
+description = "India AI Hackathon 2026 - Credit Card Optimizer"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.111.0",
+    "openai>=2.31.0",
+    "openenv-core==0.2.3",
+    "uvicorn",
+    "pydantic>=2.0.0",
+    "requests",
+    "httpx",
+]
+
+[project.scripts]
+# This defines the command 'server'
+server = "uvicorn.main:main"
+
+[tool.uv]
+managed = true
+package = false

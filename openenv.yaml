@@ -1,0 +1,5 @@
+name: credit-card-optimizer
+slug: credit-card-optimizer
+version: 1.0.0
+entrypoint: credit_card_env.server.app:app
+port: 7860
