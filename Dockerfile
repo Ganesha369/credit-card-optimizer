@@ -21,4 +21,4 @@ EXPOSE 7860
 # 1. Start the FastAPI server in the background (&)
 # 2. Wait 10 seconds to ensure the server is fully "Live"
 # 3. Run the inference script
-CMD uvicorn credit_card_env.server.app:app --host 0.0.0.0 --port 7860 & sleep 10 && python inference.py
+CMD uvicorn credit_card_env.server.app:app --host 0.0.0.0 --port 7860 & sleep 10 && python inference.py && tail -f /dev/null
