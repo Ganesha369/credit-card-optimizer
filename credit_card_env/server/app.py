@@ -11,7 +11,7 @@ app = FastAPI(
     description="OpenEnv-compatible credit card optimization environment.",
 )
 
-# Use the instance name 'environment' as per your original code
+# Use the instance name 'environment' used in your folder structure
 environment = CreditCardRewardEnvironment()
 
 @app.get("/")
@@ -28,31 +28,39 @@ def reset(
     request: Optional[ResetRequest] = Body(None)
 ) -> Reward:
     """
-    Flexible reset route: Handles task_id from URL query params or JSON body.
-    This fixes the '400 Bad Request' seen during validator startup.
+    Handles environment reset. This version is 'multilingual'—it can read
+    the task_id from a URL query string or a JSON body, defaulting to 'easy'.
     """
     try:
-        # 1. Check if task_id was sent in the URL (?task_id=easy)
-        # 2. If not, check if it was sent in the JSON body
-        # 3. Default to "easy" if both are missing
-        final_task_id = task_id or (request.task_id if request else "easy")
-        
-        return environment.reset(final_task_id)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        # Priority 1: Check URL Query (?task_id=...)
+        # Priority 2: Check JSON Body ({"task_id": "..."})
+        # Priority 3: Default to "easy"
+        final_id = "easy"
+        if task_id:
+            final_id = task_id
+        elif request and request.task_id:
+            final_id = request.task_id
+            
+        return environment.reset(final_id)
+    except Exception as e:
+        # Catch-all to prevent 400 errors during the startup handshake
+        raise HTTPException(status_code=400, detail=str(e))
 
 @app.post("/step", response_model=Reward)
 def step(request: Action) -> Reward:
+    """
+    Executes one step in the environment based on the agent's action.
+    """
     try:
         return environment.step(request.action)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
-# --- THE VALIDATOR FIX ---
+# --- VALIDATOR ENTRY POINT ---
 def main():
     """
-    Main entry point for the validator to start the server.
-    Ensures the 'multi-mode deployment' check passes.
+    Main entry point for the validator. 
+    Crucial for passing the 'Multi-mode deployment' check.
     """
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=7860)
