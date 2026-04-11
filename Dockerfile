@@ -1,24 +1,27 @@
-FROM python:3.11-slim
+# Use an official Python runtime as a parent image
+FROM python:3.10-slim
 
+# Set the working directory in the container
 WORKDIR /app
 
-# Prevent Python from writing .pyc files
-ENV PYTHONDONTWRITEBYTECODE=1
-ENV PYTHONUNBUFFERED=1
+# Copy the requirements/lock files first to leverage Docker cache
+COPY pyproject.toml .
+# If you are using uv or pip, ensure you copy the relevant lock file
+# COPY uv.lock . 
 
 # Install dependencies
-COPY requirements.txt ./
-RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir .
 
-# Copy the rest of the application
+# Copy the rest of your application code
 COPY . .
 
-# EXPOSE the port for Hugging Face
+# Set environment variables
+ENV PYTHONPATH=/app
+ENV PORT=7860
+
+# EXPOSE the port FastAPI runs on
 EXPOSE 7860
 
-# THE FIX: 
-# 1. Start the FastAPI server in the background (&)
-# 2. Wait 10 seconds to ensure the server is fully "Live"
-# 3. Run the inference script
-CMD uvicorn server.app:app --host 0.0.0.0 --port 7860 & sleep 10 && python inference.py && tail -f /dev/null
+# CRITICAL: Point to the new location of app.py
+# Format: uvicorn <folder>.<folder>.app:app
+CMD ["uvicorn", "credit_card_env.server.app:app", "--host", "0.0.0.0", "--port", "7860"]
