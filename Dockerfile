@@ -1,17 +1,10 @@
 FROM python:3.10-slim
-
-# ADD THIS LINE:
+# Force logs to show up in Hugging Face immediately
 ENV PYTHONUNBUFFERED=1
-
 WORKDIR /app
-
-RUN pip install --no-cache-dir fastapi uvicorn pydantic
-
+RUN pip install --no-cache-dir fastapi uvicorn pydantic openai
 COPY . .
-
 ENV PYTHONPATH=/app
-ENV PORT=7860
-
 EXPOSE 7860
-
+# Direct path to the real app
 CMD ["uvicorn", "credit_card_env.server.app:app", "--host", "0.0.0.0", "--port", "7860"]
