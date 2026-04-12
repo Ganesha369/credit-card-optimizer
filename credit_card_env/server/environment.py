@@ -1,80 +1,105 @@
 from __future__ import annotations
+from dataclasses import dataclass, field
+import numpy as np
 
-import random
-from typing import Final
+@dataclass
+class Transaction:
+    amount: float
+    category: str
 
-from credit_card_env.models import Card, Observation, Reward, Transaction
+@dataclass
+class Card:
+    index: int
+    name: str
+    cashback_rates: dict[str, float]
 
-TASK_CONFIG: Final[dict[str, dict[str, int | str]]] = {
+@dataclass
+class Observation:
+    task_id: str
+    difficulty: str
+    description: str
+    step_index: int
+    num_steps: int
+    transaction: Transaction
+    cards: list[Card]
+    total_reward: float
+
+@dataclass
+class Reward:
+    observation: Observation
+    reward: float
+    score: float
+    done: bool
+
+# --- MANDATORY TASK CONFIGURATION ---
+TASK_CONFIG = {
     "easy": {
-        "num_steps": 1,
-        "description": "Single transaction: pick the card with the highest cashback for the active category.",
+        "num_steps": 3,
+        "description": "Basic categories with clear best choices."
     },
     "medium": {
-        "num_steps": 3,
-        "description": "Multiple transactions: maximize cumulative cashback across overlapping card strengths.",
+        "num_steps": 5,
+        "description": "Moderate complexity with varied transaction amounts."
     },
     "hard": {
-        "num_steps": 5,
-        "description": "Longer horizon: balance category rewards against higher-fee premium cards.",
-    },
+        "num_steps": 10,
+        "description": "High complexity with many steps and overlapping categories."
+    }
 }
 
-CARD_LIBRARY: Final[dict[str, list[Card]]] = {
+DEFAULT_TASK_ID = "easy"
+
+# --- CARD LIBRARIES FOR EACH DIFFICULTY ---
+CARD_LIBRARY = {
     "easy": [
-        Card(index=0, name="card0", cashback_rates={"grocery": 0.03, "dining": 0.01, "travel": 0.01, "other": 0.01}, annual_fee=0.0),
-        Card(index=1, name="card1", cashback_rates={"grocery": 0.01, "dining": 0.02, "travel": 0.01, "other": 0.01}, annual_fee=0.0),
-        Card(index=2, name="card2", cashback_rates={"grocery": 0.015, "dining": 0.015, "travel": 0.015, "other": 0.015}, annual_fee=0.0),
-        Card(index=3, name="card3", cashback_rates={"grocery": 0.005, "dining": 0.005, "travel": 0.04, "other": 0.005}, annual_fee=0.0),
+        Card(index=0, name="Foodie", cashback_rates={"food": 0.05, "other": 0.01}),
+        Card(index=1, name="GasPro", cashback_rates={"fuel": 0.05, "other": 0.01}),
+        Card(index=2, name="ShopMax", cashback_rates={"shopping": 0.05, "other": 0.01}),
+        Card(index=3, name="Basic", cashback_rates={"other": 0.02}),
     ],
     "medium": [
-        Card(index=0, name="card0", cashback_rates={"grocery": 0.03, "dining": 0.01, "travel": 0.015, "fuel": 0.01, "other": 0.01}, annual_fee=0.0),
-        Card(index=1, name="card1", cashback_rates={"grocery": 0.01, "dining": 0.02, "travel": 0.02, "fuel": 0.015, "other": 0.01}, annual_fee=0.0),
-        Card(index=2, name="card2", cashback_rates={"grocery": 0.015, "dining": 0.03, "travel": 0.01, "fuel": 0.01, "other": 0.01}, annual_fee=0.0),
-        Card(index=3, name="card3", cashback_rates={"grocery": 0.01, "dining": 0.01, "travel": 0.035, "fuel": 0.025, "other": 0.01}, annual_fee=0.0),
+        Card(index=0, name="Traveler", cashback_rates={"travel": 0.06, "food": 0.02}),
+        Card(index=1, name="Retailer", cashback_rates={"shopping": 0.05, "fuel": 0.02}),
+        Card(index=2, name="Global", cashback_rates={"travel": 0.03, "other": 0.02}),
+        Card(index=3, name="Utility", cashback_rates={"fuel": 0.04, "other": 0.01}),
     ],
     "hard": [
-        Card(index=0, name="card0", cashback_rates={"grocery": 0.025, "dining": 0.02, "travel": 0.03, "fuel": 0.015, "online": 0.02, "other": 0.01}, annual_fee=999.0),
-        Card(index=1, name="card1", cashback_rates={"grocery": 0.02, "dining": 0.03, "travel": 0.02, "fuel": 0.01, "online": 0.015, "other": 0.01}, annual_fee=199.0),
-        Card(index=2, name="card2", cashback_rates={"grocery": 0.015, "dining": 0.015, "travel": 0.04, "fuel": 0.03, "online": 0.015, "other": 0.01}, annual_fee=499.0),
-        Card(index=3, name="card3", cashback_rates={"grocery": 0.03, "dining": 0.015, "travel": 0.015, "fuel": 0.015, "online": 0.035, "other": 0.012}, annual_fee=0.0),
-    ],
+        Card(index=0, name="Elite Travel", cashback_rates={"travel": 0.07, "dining": 0.03}),
+        Card(index=1, name="Premium Dining", cashback_rates={"dining": 0.07, "shopping": 0.02}),
+        Card(index=2, name="Hardcore Shop", cashback_rates={"shopping": 0.06, "travel": 0.01}),
+        Card(index=3, name="AllRound", cashback_rates={"other": 0.03}),
+    ]
 }
 
-TRANSACTION_POOLS: Final[dict[str, list[Transaction]]] = {
+# --- TRANSACTION POOLS ---
+TRANSACTION_POOLS = {
     "easy": [
-        Transaction(amount=1250.0, category="grocery"),
-        Transaction(amount=860.0, category="dining"),
-        Transaction(amount=4200.0, category="travel"),
+        Transaction(amount=100.0, category="food"),
+        Transaction(amount=50.0, category="fuel")
     ],
     "medium": [
-        Transaction(amount=1800.0, category="grocery"),
-        Transaction(amount=950.0, category="dining"),
-        Transaction(amount=3200.0, category="travel"),
-        Transaction(amount=2200.0, category="fuel"),
+        Transaction(amount=200.0, category="shopping"),
+        Transaction(amount=500.0, category="travel"),
+        Transaction(amount=150.0, category="food")
     ],
     "hard": [
-        Transaction(amount=2450.0, category="grocery"),
-        Transaction(amount=1350.0, category="dining"),
-        Transaction(amount=7800.0, category="travel"),
-        Transaction(amount=2600.0, category="fuel"),
-        Transaction(amount=4100.0, category="online"),
-    ],
+        Transaction(amount=1000.0, category="travel"),
+        Transaction(amount=400.0, category="dining"),
+        Transaction(amount=80.0, category="fuel"),
+        Transaction(amount=300.0, category="shopping")
+    ]
 }
-
-DEFAULT_TASK_ID: Final[str] = "easy"
-
 
 class CreditCardRewardEnvironment:
-    def __init__(self) -> None:
-        self._rng = random.Random(7)
+    def __init__(self, seed: int = 42):
+        self._rng = np.random.default_rng(seed)
         self.task_id = DEFAULT_TASK_ID
         self.step_index = 0
         self.total_reward = 0.0
         self.done = False
-        self.current_transaction = TRANSACTION_POOLS[DEFAULT_TASK_ID][0]
+        self.current_transaction = None
 
-    def reset(self, task_id: str | None = "easy") -> Reward:
+    def reset(self, task_id: str | None = None) -> Reward:
         self.task_id = self._normalize_task_id(task_id)
         self.step_index = 0
         self.total_reward = 0.0
@@ -85,15 +110,18 @@ class CreditCardRewardEnvironment:
     def step(self, action: int) -> Reward:
         if self.done:
             raise ValueError("Episode already completed. Call /reset before /step.")
-        if not 0 <= action <= 3:
-            raise ValueError("Action must be between 0 and 3.")
+        
+        # Action validation
+        action = max(0, min(int(action), 3))
 
         cards = CARD_LIBRARY[self.task_id]
         best_index = self._best_card_index(self.current_transaction)
+        
         selected_value = self._cashback_value(cards[action], self.current_transaction)
         best_value = self._cashback_value(cards[best_index], self.current_transaction)
 
-        raw_reward = 0.0 if best_value <= 0 else selected_value / best_value
+        # Reward calculation: Perfect choice = 1.0 reward
+        raw_reward = 1.0 if (best_value <= 0 and selected_value <= 0) else (selected_value / best_value if best_value > 0 else 0.0)
         reward = max(0.0, min(round(raw_reward, 2), 1.0))
 
         self.total_reward = round(self.total_reward + reward, 2)
@@ -108,17 +136,15 @@ class CreditCardRewardEnvironment:
     def _normalize_task_id(self, task_id: str | None) -> str:
         if task_id is None:
             return DEFAULT_TASK_ID
-
         normalized = str(task_id).strip().lower()
-        if not normalized or normalized not in TASK_CONFIG:
-            return DEFAULT_TASK_ID
-        return normalized
+        return normalized if normalized in TASK_CONFIG else DEFAULT_TASK_ID
 
     def _current_score(self) -> float:
         max_steps = int(TASK_CONFIG[self.task_id]["num_steps"])
         if max_steps <= 0:
             return 0.0
-        return max(0.0, min(round(self.total_reward / max_steps, 2), 1.0))
+        # Normalizes total reward by the number of steps
+        return max(0.01, min(round(self.total_reward / max_steps, 2), 0.99))
 
     def _current_observation(self) -> Observation:
         config = TASK_CONFIG[self.task_id]
@@ -134,16 +160,16 @@ class CreditCardRewardEnvironment:
         )
 
     def _build_response(self, reward: float) -> Reward:
-        final_reward = max(0.0, min(round(float(reward), 2), 1.0))
         return Reward(
             observation=self._current_observation(),
-            reward=final_reward,
+            reward=max(0.0, min(float(reward), 1.0)),
             score=self._current_score(),
             done=self.done,
         )
 
     def _sample_transaction(self) -> Transaction:
-        return self._rng.choice(TRANSACTION_POOLS[self.task_id])
+        pool = TRANSACTION_POOLS[self.task_id]
+        return self._rng.choice(pool)
 
     @staticmethod
     def _cashback_value(card: Card, transaction: Transaction) -> float:
@@ -151,5 +177,6 @@ class CreditCardRewardEnvironment:
         return transaction.amount * rate
 
     def _best_card_index(self, transaction: Transaction) -> int:
-        values = [self._cashback_value(card, transaction) for card in CARD_LIBRARY[self.task_id]]
-        return max(range(len(values)), key=values.__getitem__)
+       values = [self._cashback_value(card, transaction) for card in CARD_LIBRARY[self.task_id]]
+    # This finds the index of the highest value in the list
+       return int(np.argmax(values))
