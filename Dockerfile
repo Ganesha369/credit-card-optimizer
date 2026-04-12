@@ -1,5 +1,8 @@
 FROM python:3.10-slim
 
+# ADD THIS LINE:
+ENV PYTHONUNBUFFERED=1
+
 WORKDIR /app
 
 RUN pip install --no-cache-dir fastapi uvicorn pydantic
