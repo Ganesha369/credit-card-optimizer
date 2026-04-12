@@ -1,51 +1,71 @@
 from __future__ import annotations
-from typing import Optional
-from fastapi import FastAPI, HTTPException, Body, Query, Request
+
+from typing import Any
+
+from fastapi import Body, FastAPI, HTTPException, Query
 
 from credit_card_env.models import Action, ResetRequest, Reward
-from credit_card_env.server.environment import CreditCardRewardEnvironment
+from credit_card_env.server.environment import (
+    DEFAULT_TASK_ID,
+    TASK_CONFIG,
+    CreditCardRewardEnvironment,
+)
 
 app = FastAPI(title="credit-card-optimizer")
-environment = CreditCardRewardEnvironment()
+env = CreditCardRewardEnvironment()
+
+
+def _normalize_task_id(task_id: Any) -> str:
+    if task_id is None:
+        return DEFAULT_TASK_ID
+
+    normalized = str(task_id).strip().lower()
+    if not normalized or normalized not in TASK_CONFIG:
+        return DEFAULT_TASK_ID
+    return normalized
+
 
 @app.get("/")
-def root():
+def root() -> dict[str, str]:
     return {"status": "running"}
 
+
 @app.post("/reset", response_model=Reward)
-async def reset(
-    task_id: Optional[str] = Query(None), 
-    request: Optional[ResetRequest] = Body(None),
-    raw_request: Request = None
+def reset(
+    task_id: str | None = Query(default=None),
+    request: dict[str, Any] | ResetRequest | None = Body(default=None),
 ) -> Reward:
     try:
-        # 1. Try to get task_id from Query Param (?task_id=easy)
-        # 2. Try to get task_id from JSON Body ({"task_id": "easy"})
-        # 3. If all fails, default to "easy"
-        
-        final_id = "easy"
-        if task_id:
-            final_id = task_id
-        elif request and request.task_id:
-            final_id = request.task_id
-            
-        print(f"Resetting with task_id: {final_id}") # This will show in your HF logs
-        return environment.reset(final_id)
-    except Exception as e:
-        # We catch everything and return "easy" instead of a 400 error
-        print(f"Reset Error: {e}. Defaulting to easy.")
-        return environment.reset("easy")
+        body_task_id: Any = None
+        if isinstance(request, ResetRequest):
+            body_task_id = request.task_id
+        elif isinstance(request, dict):
+            body_task_id = request.get("task_id")
+
+        requested_task_id = task_id if task_id is not None else body_task_id
+        reward_obj = env.reset(_normalize_task_id(requested_task_id))
+    except Exception:
+        reward_obj = env.reset(DEFAULT_TASK_ID)
+
+    print(f"[START] task={env.task_id} env=credit_card_env model=custom", flush=True)
+    return reward_obj
+
 
 @app.post("/step", response_model=Reward)
 def step(request: Action) -> Reward:
     try:
-        return environment.step(request.action)
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        reward_obj = env.step(request.action)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-def main():
-    import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=7860)
+    print(
+        f"[STEP] step={env.step_index} action={request.action} reward={reward_obj.reward:.2f} done={str(reward_obj.done).lower()} error=null",
+        flush=True,
+    )
+    return reward_obj
+
 
 if __name__ == "__main__":
-    main()
+    import uvicorn
+
+    uvicorn.run(app, host="0.0.0.0", port=7860)

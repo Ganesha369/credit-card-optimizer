@@ -6,9 +6,18 @@ from typing import Final
 from credit_card_env.models import Card, Observation, Reward, Transaction
 
 TASK_CONFIG: Final[dict[str, dict[str, int | str]]] = {
-    "easy": {"num_steps": 1, "description": "Single transaction: Pick the card with the highest specific category cashback."},
-    "medium": {"num_steps": 3, "description": "Multiple steps: Compare overlapping cashback rates to maximize total return."},
-    "hard": {"num_steps": 5, "description": "Complex trade-offs: Analyze high cashback vs. high annual fees across categories."},
+    "easy": {
+        "num_steps": 1,
+        "description": "Single transaction: pick the card with the highest cashback for the active category.",
+    },
+    "medium": {
+        "num_steps": 3,
+        "description": "Multiple transactions: maximize cumulative cashback across overlapping card strengths.",
+    },
+    "hard": {
+        "num_steps": 5,
+        "description": "Longer horizon: balance category rewards against higher-fee premium cards.",
+    },
 }
 
 CARD_LIBRARY: Final[dict[str, list[Card]]] = {
@@ -53,29 +62,20 @@ TRANSACTION_POOLS: Final[dict[str, list[Transaction]]] = {
     ],
 }
 
+DEFAULT_TASK_ID: Final[str] = "easy"
+
 
 class CreditCardRewardEnvironment:
     def __init__(self) -> None:
-        """Initializes the environment state and random seed."""
         self._rng = random.Random(7)
-        self.task_id = "easy"
+        self.task_id = DEFAULT_TASK_ID
         self.step_index = 0
         self.total_reward = 0.0
         self.done = False
-        self.current_transaction = TRANSACTION_POOLS[self.task_id][0]
+        self.current_transaction = TRANSACTION_POOLS[DEFAULT_TASK_ID][0]
 
-    def reset(self, task_id: str | None = None) -> Reward:
-        """Resets the episode with safe handling of task_id."""
-        # 1. Handle potential None or empty strings from the validator
-        if not task_id or task_id == "null":
-            task_id = "easy"
-            
-        # 2. Ensure we match the keys in TASK_CONFIG
-        if task_id not in TASK_CONFIG:
-            # Instead of crashing with 400, default to easy so the test continues
-            task_id = "easy"
-
-        self.task_id = task_id
+    def reset(self, task_id: str | None = "easy") -> Reward:
+        self.task_id = self._normalize_task_id(task_id)
         self.step_index = 0
         self.total_reward = 0.0
         self.done = False
@@ -83,37 +83,45 @@ class CreditCardRewardEnvironment:
         return self._build_response(reward=0.0)
 
     def step(self, action: int) -> Reward:
-        """Executes one step: calculates reward, updates state, and returns the next observation."""
         if self.done:
             raise ValueError("Episode already completed. Call /reset before /step.")
-        if not (0 <= action <= 3):
+        if not 0 <= action <= 3:
             raise ValueError("Action must be between 0 and 3.")
 
-        # Calculate logical reward
+        cards = CARD_LIBRARY[self.task_id]
         best_index = self._best_card_index(self.current_transaction)
-        selected_value = self._cashback_value(CARD_LIBRARY[self.task_id][action], self.current_transaction)
-        best_value = self._cashback_value(CARD_LIBRARY[self.task_id][best_index], self.current_transaction)
-        
-        # --- GRADERS COMPLIANCE (PHASE 2) ---
-        # Normalize reward strictly between 0 and 1 (0.05 to 0.95 range)
-        base_ratio = 0.0 if best_value == 0 else (selected_value / best_value)
-        reward = round(0.05 + (base_ratio * 0.90), 4)
+        selected_value = self._cashback_value(cards[action], self.current_transaction)
+        best_value = self._cashback_value(cards[best_index], self.current_transaction)
 
-        self.total_reward += reward
+        raw_reward = 0.0 if best_value <= 0 else selected_value / best_value
+        reward = max(0.0, min(round(raw_reward, 2), 1.0))
+
+        self.total_reward = round(self.total_reward + reward, 2)
         self.step_index += 1
-        
-        # Check completion
-        max_steps = int(TASK_CONFIG[self.task_id]["num_steps"])
-        self.done = self.step_index >= max_steps
+        self.done = self.step_index >= int(TASK_CONFIG[self.task_id]["num_steps"])
 
         if not self.done:
             self.current_transaction = self._sample_transaction()
 
         return self._build_response(reward=reward)
 
+    def _normalize_task_id(self, task_id: str | None) -> str:
+        if task_id is None:
+            return DEFAULT_TASK_ID
+
+        normalized = str(task_id).strip().lower()
+        if not normalized or normalized not in TASK_CONFIG:
+            return DEFAULT_TASK_ID
+        return normalized
+
+    def _current_score(self) -> float:
+        max_steps = int(TASK_CONFIG[self.task_id]["num_steps"])
+        if max_steps <= 0:
+            return 0.0
+        return max(0.0, min(round(self.total_reward / max_steps, 2), 1.0))
+
     def _current_observation(self) -> Observation:
         config = TASK_CONFIG[self.task_id]
-        
         return Observation(
             task_id=self.task_id,
             difficulty=self.task_id,
@@ -122,37 +130,26 @@ class CreditCardRewardEnvironment:
             num_steps=int(config["num_steps"]),
             transaction=self.current_transaction,
             cards=CARD_LIBRARY[self.task_id],
-            # Use 2 decimal places for cleaner parsing
-            total_reward=round(self.total_reward, 2), 
+            total_reward=round(self.total_reward, 2),
         )
 
     def _build_response(self, reward: float) -> Reward:
-        # Ensure reward is strictly in (0, 1) and rounded to 2 decimals
-        final_reward = round(reward, 2)
-        
-        # Build the standard Reward object
-        response = Reward(
+        final_reward = max(0.0, min(round(float(reward), 2), 1.0))
+        return Reward(
             observation=self._current_observation(),
             reward=final_reward,
+            score=self._current_score(),
             done=self.done,
         )
-        
-        # TRICK: Some graders look for a 'score' field specifically. 
-        # We can safely add this as an attribute to the object.
-        response.score = final_reward 
-        
-        return response
+
     def _sample_transaction(self) -> Transaction:
-        """Randomly selects a transaction from the current task's pool."""
         return self._rng.choice(TRANSACTION_POOLS[self.task_id])
 
     @staticmethod
     def _cashback_value(card: Card, transaction: Transaction) -> float:
-        """Calculates the raw cashback amount for a specific card and transaction."""
         rate = card.cashback_rates.get(transaction.category, card.cashback_rates.get("other", 0.0))
         return transaction.amount * rate
 
     def _best_card_index(self, transaction: Transaction) -> int:
-        """Finds the index of the card that provides the maximum cashback."""
         values = [self._cashback_value(card, transaction) for card in CARD_LIBRARY[self.task_id]]
         return max(range(len(values)), key=values.__getitem__)

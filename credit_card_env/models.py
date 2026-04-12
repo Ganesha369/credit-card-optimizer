@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Literal
+from typing import Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -41,9 +41,10 @@ class Action(StrictModel):
 
 class Reward(StrictModel):
     observation: Observation
-    reward: float
+    reward: float = 0.0
+    score: float = 0.0
     done: bool
 
 
-class ResetRequest(StrictModel):
-    task_id: Difficulty
+class ResetRequest(BaseModel):
+    task_id: Optional[str] = Field(default="easy")

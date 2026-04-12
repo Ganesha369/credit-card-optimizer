@@ -1,121 +1,101 @@
 from __future__ import annotations
+
 import os
-import traceback
-from typing import Any
-import httpx
-from openai import OpenAI
-from dotenv import load_dotenv # Added to load your .env file
-from credit_card_env.client import CreditCardEnvClient
+from typing import List, Optional
 
-# Load the .env file automatically
-load_dotenv()
+from credit_card_env.server.environment import CreditCardRewardEnvironment
 
-# Mandatory Environment Variables
-# These now use the values from your .env or fall back to defaults
-API_BASE_URL = os.getenv("API_BASE_URL", "https://router.huggingface.co/v1")
-MODEL_NAME = os.getenv("MODEL_NAME", "meta-llama/Meta-Llama-3-8B-Instruct")
-HF_TOKEN = os.getenv("HF_TOKEN") 
-SERVER_BASE_URL = os.getenv("SERVER_BASE_URL", "http://localhost:7860")
-TASK_IDS = ("easy", "medium", "hard")
+MODEL_NAME = os.getenv("MODEL_NAME", "custom")
+TASK_NAME = os.getenv("TASK_NAME", "easy")
+BENCHMARK = os.getenv("BENCHMARK", "credit_card_env")
+MAX_STEPS = int(os.getenv("MAX_STEPS", "8"))
+SUCCESS_SCORE_THRESHOLD = float(os.getenv("SUCCESS_SCORE_THRESHOLD", "0.1"))
 
-def create_http_client() -> httpx.Client:
-    return httpx.Client(timeout=60.0)
 
-def create_openai_client() -> OpenAI:
-    if not HF_TOKEN:
-        # If this hits, load_dotenv() failed or HF_TOKEN is missing from .env
-        raise RuntimeError("HF_TOKEN is missing! Please check your .env file.")
-    
-    return OpenAI(
-        base_url=API_BASE_URL,
-        api_key=HF_TOKEN,
-        http_client=create_http_client(),
-    )
+def log_start(task: str, env: str, model: str) -> None:
+    print(f"[START] task={task} env={env} model={model}", flush=True)
 
-def build_prompt(transaction: dict[str, Any], cards: list[dict[str, Any]]) -> str:
-    return (
-        "Analyze the transaction and available credit cards. "
-        "Choose the single best card index (0, 1, 2, or 3). "
-        "Return ONLY the integer.\n"
-        f"Transaction: {transaction}\n"
-        f"Cards: {cards}"
-    )
 
-def choose_card(client: OpenAI, observation: dict[str, Any]) -> int:
-    obs = observation.get("observation", observation)
-    transaction = obs.get("transaction", obs)
-    cards = obs.get("cards", [])
-
-    completion = client.chat.completions.create(
-        model=MODEL_NAME,
-        temperature=0, # Keep at 0 for consistency!
-        messages=[
-            {
-                "role": "system", 
-                "content": (
-                    "You are an expert Credit Card Reward Optimizer. "
-                    "Your goal is to maximize cashback. "
-                    "1. Analyze the transaction category (e.g., Food, Travel, Shopping). "
-                    "2. Compare the cashback rates for each of the 4 cards (indices 0-3). "
-                    "3. Select the card with the highest percentage for this specific transaction. "
-                    "Output ONLY the integer index (0, 1, 2, or 3)."
-                )
-            },
-            {"role": "user", "content": build_prompt(transaction, cards)},
-        ],
-    )
-
-    content = (completion.choices[0].message.content or "").strip()
-    # Robust extraction to ensure we always get a valid integer
-    digits = [char for char in content if char in "0123"]
-    return int(digits[0]) if digits else 0
-
-def log_step(task_id: str, step_num: int, action: int, reward: float, done: bool, error: str) -> None:
-    done_str = "true" if done else "false"
+def log_step(step: int, action: str, reward: float, done: bool, error: Optional[str]) -> None:
+    error_val = error if error else "null"
     print(
-        f"[STEP] task={task_id} step={step_num} action={action} reward={reward:.2f} done={done_str} error={error}",
+        f"[STEP] step={step} action={action} reward={reward:.2f} done={str(done).lower()} error={error_val}",
         flush=True,
     )
 
-def run_task(task_id: str, env_client: CreditCardEnvClient, client: OpenAI) -> float:
-    observation = env_client.reset(task_id)
-    step_num = 1
-    total_reward = 0.0
 
-    while True:
-        action, reward, done, error = -1, 0.0, False, "none"
-        try:
-            action = choose_card(client, observation)
-            result = env_client.step(action)
-            observation = result.get("observation", result)
-            reward = float(result.get("reward", 0.0))
-            done = bool(result.get("done", False))
-            total_reward += reward
-        except Exception as exc:
-            done, error = True, str(exc).replace(" ", "_")
-            log_step(task_id, step_num, action, reward, done, error)
-            break 
+def log_end(success: bool, steps: int, score: float, rewards: List[float]) -> None:
+    rewards_str = ",".join(f"{reward:.2f}" for reward in rewards)
+    print(
+        f"[END] success={str(success).lower()} steps={steps} score={score:.2f} rewards={rewards_str}",
+        flush=True,
+    )
 
-        log_step(task_id, step_num, action, reward, done, error)
-        if done:
-            break
-        step_num += 1
-    return total_reward
+
+def choose_best_card(observation) -> int:
+    transaction = observation.transaction
+    best_index = 0
+    best_value = float("-inf")
+
+    for card in observation.cards:
+        rate = card.cashback_rates.get(transaction.category, card.cashback_rates.get("other", 0.0))
+        cashback_value = transaction.amount * rate
+        if cashback_value > best_value:
+            best_value = cashback_value
+            best_index = card.index
+
+    return best_index
+
 
 def main() -> None:
-    print("[START]", flush=True)
-    total_reward, success = 0.0, True
-    try:
-        openai_client = create_openai_client()
-        env_client = CreditCardEnvClient(base_url=SERVER_BASE_URL)
+    env = CreditCardRewardEnvironment()
+    rewards: List[float] = []
+    steps_taken = 0
+    score = 0.0
+    success = False
 
-        for task_id in TASK_IDS:
-            total_reward += run_task(task_id, env_client, openai_client)
-    except Exception:
+    log_start(task=TASK_NAME, env=BENCHMARK, model=MODEL_NAME)
+
+    try:
+        result = env.reset(TASK_NAME)
+
+        for step in range(1, MAX_STEPS + 1):
+            if result.done:
+                break
+
+            action = choose_best_card(result.observation)
+            result = env.step(action)
+
+            reward = round(float(result.reward), 2)
+            rewards.append(reward)
+            steps_taken = step
+
+            log_step(
+                step=step,
+                action=str(action),
+                reward=reward,
+                done=bool(result.done),
+                error=None,
+            )
+
+            if result.done:
+                break
+
+        score = max(0.0, min(round(float(result.score), 2), 1.0))
+        success = score >= SUCCESS_SCORE_THRESHOLD
+    except Exception as exc:
+        log_step(
+            step=max(steps_taken, 1),
+            action="null",
+            reward=0.0,
+            done=True,
+            error=str(exc),
+        )
         success = False
+        score = 0.0
     finally:
-        success_str = "true" if success else "false"
-        print(f"[END] success={success_str} total_reward={total_reward:.2f}", flush=True)
+        log_end(success=success, steps=steps_taken, score=score, rewards=rewards)
+
 
 if __name__ == "__main__":
     main()
